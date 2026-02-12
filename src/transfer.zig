@@ -72,11 +72,11 @@ fn handleConnection(alloc: std.mem.Allocator, user_config: Config, stream: std.n
             return FileTransferErrors.ChecksumMisMatch;
         }
         on_progress(.{ .current_file = header.path, .files_done = i + 1, .files_total = offer.total_files, .bytes_sent = offer.total_size - remaining, .bytes_total = offer.total_size });
-        const tc = Protocol.read_message(alloc, reader.interface()) catch return;
-        defer tc.deinit();
-        Protocol.write_message(alloc, &writer.interface, .{ .ack = {} }) catch return;
-        writer.interface.flush() catch return;
     }
+    const tc = Protocol.read_message(alloc, reader.interface()) catch return;
+    defer tc.deinit();
+    Protocol.write_message(alloc, &writer.interface, .{ .ack = {} }) catch return;
+    writer.interface.flush() catch return;
 }
 pub fn sendFiles(alloc: std.mem.Allocator, peer: Peer, files: []const fs_utils.FileEntry, user_config: Config, on_progress: *const fn (Progress) void) !void {
     var connect_addr = peer.address;
