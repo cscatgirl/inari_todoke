@@ -1,9 +1,19 @@
 const std = @import("std");
+const posix = std.posix;
 const Config = @import("config.zig").Config;
 const Protocol = @import("protocol.zig");
 const fs_utils = @import("fs.zig");
 const Peer = @import("peer.zig").Peer;
 const FileTransferErrors = error{ ChecksumMisMatch, PathIsInvalid, TransferRejected };
+
+fn tuneSocket(fd: posix.socket_t) void {
+    // Disable Nagle's algorithm — send packets immediately
+    posix.setsockopt(fd, posix.IPPROTO.TCP, std.c.TCP.NODELAY, &std.mem.toBytes(@as(c_int, 1))) catch {};
+    // 2 MB kernel send/receive buffers
+    const buf_size = 2 * 1024 * 1024;
+    posix.setsockopt(fd, posix.SOL.SOCKET, std.c.SO.SNDBUF, &std.mem.toBytes(@as(c_int, buf_size))) catch {};
+    posix.setsockopt(fd, posix.SOL.SOCKET, std.c.SO.RCVBUF, &std.mem.toBytes(@as(c_int, buf_size))) catch {};
+}
 pub const Progress = struct { current_file: []const u8, files_done: usize, files_total: usize, bytes_sent: u64, bytes_total: u64 };
 fn isPathSafe(path: []const u8) bool {
     if (path.len > 0 and path[0] == '/') return false;
@@ -31,6 +41,7 @@ pub fn serverLoop(alloc: std.mem.Allocator, user_config: Config, server: *std.ne
     }
 }
 fn handleConnection(alloc: std.mem.Allocator, user_config: Config, stream: std.net.Stream, on_offer: *const fn (Protocol.TransferOfferPayload) bool, on_progress: *const fn (Progress) void) !void {
+    tuneSocket(stream.handle);
     var read_buf: [256 * 1024]u8 = undefined;
     var write_buf: [4096]u8 = undefined;
     var reader = stream.reader(&read_buf);
@@ -83,6 +94,7 @@ pub fn sendFiles(alloc: std.mem.Allocator, peer: Peer, files: []const fs_utils.F
     connect_addr.setPort(peer.port);
     const stream = try std.net.tcpConnectToAddress(connect_addr);
     defer stream.close();
+    tuneSocket(stream.handle);
     var read_buf: [4096]u8 = undefined;
     var write_buf: [256 * 1024]u8 = undefined;
     var reader = stream.reader(&read_buf);
