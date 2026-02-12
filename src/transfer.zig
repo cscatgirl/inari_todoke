@@ -31,7 +31,7 @@ pub fn serverLoop(alloc: std.mem.Allocator, user_config: Config, server: *std.ne
     }
 }
 fn handleConnection(alloc: std.mem.Allocator, user_config: Config, stream: std.net.Stream, on_offer: *const fn (Protocol.TransferOfferPayload) bool, on_progress: *const fn (Progress) void) !void {
-    var read_buf: [4096]u8 = undefined;
+    var read_buf: [256 * 1024]u8 = undefined;
     var write_buf: [4096]u8 = undefined;
     var reader = stream.reader(&read_buf);
     var writer = stream.writer(&write_buf);
@@ -51,7 +51,7 @@ fn handleConnection(alloc: std.mem.Allocator, user_config: Config, stream: std.n
 
         var remaining: u64 = header.size;
         var checksum = std.crypto.hash.sha2.Sha256.init(.{});
-        var buf: [64 * 1024]u8 = undefined;
+        var buf: [512 * 1024]u8 = undefined;
         while (remaining > 0) {
             const to_read: usize = @intCast(@min(remaining, buf.len));
             const n = reader.interface().readSliceShort(buf[0..to_read]) catch return;
@@ -84,7 +84,7 @@ pub fn sendFiles(alloc: std.mem.Allocator, peer: Peer, files: []const fs_utils.F
     const stream = try std.net.tcpConnectToAddress(connect_addr);
     defer stream.close();
     var read_buf: [4096]u8 = undefined;
-    var write_buf: [4096]u8 = undefined;
+    var write_buf: [256 * 1024]u8 = undefined;
     var reader = stream.reader(&read_buf);
     var writer = stream.writer(&write_buf);
 
@@ -106,14 +106,13 @@ pub fn sendFiles(alloc: std.mem.Allocator, peer: Peer, files: []const fs_utils.F
         defer file.close();
 
         var hash = std.crypto.hash.sha2.Sha256.init(.{});
-        var buf: [64 * 1024]u8 = undefined;
+        var buf: [512 * 1024]u8 = undefined;
 
         try Protocol.write_message(alloc, &writer.interface, .{ .file_header = .{
             .id = info.id,
             .path = f.relative_path,
             .size = f.size,
         } });
-        try writer.interface.flush();
 
         var remaining: u64 = f.size;
         while (remaining > 0) {
@@ -124,7 +123,6 @@ pub fn sendFiles(alloc: std.mem.Allocator, peer: Peer, files: []const fs_utils.F
             remaining -= n;
             bytes_sent += n;
         }
-        try writer.interface.flush();
         const final_hash = hash.finalResult();
         const checksum_hex = std.fmt.bytesToHex(final_hash, .lower);
         try Protocol.write_message(alloc, &writer.interface, .{ .file_complete = .{
