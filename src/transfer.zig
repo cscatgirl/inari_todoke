@@ -53,6 +53,7 @@ fn handleConnection(alloc: std.mem.Allocator, user_config: Config, stream: std.n
     Protocol.write_message(alloc, &writer.interface, .{ .transfer_response = .{ .transfer_id = offer.transfer_id, .accepted = accepted } }) catch return;
     writer.interface.flush() catch return;
     if (!accepted) return;
+    var total_received: u64 = 0;
     for (0..offer.total_files) |i| {
         const header_msg = Protocol.read_message(alloc, reader.interface()) catch return;
         const header = header_msg.value.file_header;
@@ -70,6 +71,8 @@ fn handleConnection(alloc: std.mem.Allocator, user_config: Config, stream: std.n
             out_file.writeAll(buf[0..n]) catch return;
             checksum.update(buf[0..n]);
             remaining -= n;
+            total_received += n;
+            on_progress(.{ .current_file = header.path, .files_done = i + 1, .files_total = offer.total_files, .bytes_sent = total_received, .bytes_total = offer.total_size });
         }
         const comp_msg = Protocol.read_message(alloc, reader.interface()) catch return;
         defer comp_msg.deinit();
@@ -82,7 +85,6 @@ fn handleConnection(alloc: std.mem.Allocator, user_config: Config, stream: std.n
             std.fs.deleteFileAbsolute(full_path) catch {};
             return FileTransferErrors.ChecksumMisMatch;
         }
-        on_progress(.{ .current_file = header.path, .files_done = i + 1, .files_total = offer.total_files, .bytes_sent = offer.total_size - remaining, .bytes_total = offer.total_size });
     }
     const tc = Protocol.read_message(alloc, reader.interface()) catch return;
     defer tc.deinit();
@@ -134,6 +136,7 @@ pub fn sendFiles(alloc: std.mem.Allocator, peer: Peer, files: []const fs_utils.F
             hash.update(buf[0..n]);
             remaining -= n;
             bytes_sent += n;
+            on_progress(.{ .current_file = f.relative_path, .files_done = i + 1, .files_total = files.len, .bytes_sent = bytes_sent, .bytes_total = total_size });
         }
         const final_hash = hash.finalResult();
         const checksum_hex = std.fmt.bytesToHex(final_hash, .lower);
@@ -142,8 +145,6 @@ pub fn sendFiles(alloc: std.mem.Allocator, peer: Peer, files: []const fs_utils.F
             .checksum = &checksum_hex,
         } });
         try writer.interface.flush();
-
-        on_progress(.{ .current_file = f.relative_path, .files_done = i + 1, .files_total = files.len, .bytes_sent = bytes_sent, .bytes_total = total_size });
     }
     try Protocol.write_message(alloc, &writer.interface, .{ .transfer_complete = {} });
     try writer.interface.flush();
